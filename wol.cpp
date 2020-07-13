@@ -3,6 +3,7 @@
 #include <map>
 #include <string>
 #include <regex>
+#include <vector>
 
 static const std::map<std::string, std::string> s_g_cmd_map = {
     {"wake", "wakes up a machine by mac address or alias"},
@@ -24,17 +25,14 @@ static void print_usage();
 static void list_aliases();
 static bool remove_alias(const std::string &alias);
 static bool stores_alias(const std::string &alias, const std::string &mac);
+static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec);
 
 int main(int argc, char **argv)
 {
-    
-}
-
-std::map<std::string, std::string> parse_cmd(int argc, char **argv)
-{
     std::regex reg("^(-){0,2}(.)+$");
+    std::vector<std::string> wake_machine_vec; 
+    std::map<std::string, std::string> cmd_map;
 
-    std::map<std::string, std::string> result_map;
     for (int i = 1; i < argc;)
     {
         std::string cmd = argv[i];
@@ -53,7 +51,7 @@ std::map<std::string, std::string> parse_cmd(int argc, char **argv)
         {
             if (i + 1 < argc)
             {
-                result_map.emplace("port", argv[i+1]);
+                cmd_map.emplace("port", argv[i+1]);
                 i += 2;
                 continue;
             }
@@ -67,7 +65,7 @@ std::map<std::string, std::string> parse_cmd(int argc, char **argv)
         {
             if (i + 1 < argc)
             {
-                result_map.emplace("bcast", argv[i+1]);
+                cmd_map.emplace("bcast", argv[i+1]);
                 i += 2;
                 continue;
             }
@@ -81,7 +79,7 @@ std::map<std::string, std::string> parse_cmd(int argc, char **argv)
         {
             if (i + 1 < argc)
             {
-                result_map.emplace("interface", argv[i+1]);
+                cmd_map.emplace("interface", argv[i+1]);
                 i += 2;
                 continue;
             }
@@ -122,10 +120,22 @@ std::map<std::string, std::string> parse_cmd(int argc, char **argv)
         }
         else if (cmd == "wake")
         {
-            ;
+            if (i + 1 < argc)
+            {
+                cmd_map.emplace("wake", argv[i+1]);
+                i += 2;
+                continue;
+            }
+            else 
+            {
+                fprintf(stderr, "option %s required two parameters\n", cmd.c_str());
+                exit(1);
+            }
         }
 
+        wake_machine_vec.emplace_back(argv[i]);
         ++i;
     }
 
+    wake_alias(cmd_map, wake_machine_vec) ? exit(0) : exit(1);
 }

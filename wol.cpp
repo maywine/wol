@@ -10,6 +10,7 @@
 #include <string>
 #include <regex>
 #include <vector>
+#include <sstream>
 
 static std::string stores_file_path;
 
@@ -18,8 +19,9 @@ static void list_aliases();
 static bool remove_alias(const std::string &alias);
 static bool stores_alias(const std::string &alias, const std::string &mac);
 static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec);
+static std::vector<std::string> split(const std::string &s, char delim);
 static std::map<uint64_t, std::string> parse_mac_addr(const std::string &data);
-static std::string mac_addr_to_string(const std::map<uint64_t, std::string> &mac_map);
+static std::string mac_addr_to_str(const std::map<uint64_t, std::string> &mac_map);
 
 constexpr uint32_t kMACSize = sizeof(uint64_t);
 constexpr uint32_t kAliasSize = sizeof(uint16_t);
@@ -193,26 +195,39 @@ int main(int argc, char **argv)
     return 0;
 }
 
-static bool is_big_endian()
+static std::vector<std::string> split(const std::string &s, char delim) 
 {
-    int32_t tmp = 0x12345678;
-    char *p = (char *)&tmp;
-    return *p == 0x12;
+    std::stringstream ss(s);
+    std::string item;
+    std::vector<std::string> elems;
+    while (std::getline(ss, item, delim)) 
+    {
+        elems.push_back(std::move(item));
+    }
+    return elems;
 }
 
-static std::string mac_integer_to_string(uint64_t mac_addr)
+static std::string mac_integer_to_str(uint64_t mac_addr)
 {
-    uint16_t array[6];
+    uint8_t array[6];
+    //00:00:00:00:12:34:56:78
+    for (int i = 6; i > 0; --i)
+    {
+        array[i] = mac_addr & 0xfful;
+        mac_addr >>= 8;
+    }
 
-    if (is_big_endian())
-    {
-        //00:00:00:00:12:34:56:78
-        //array[0] = ;
-    }
-    else
-    {
-        //78:56:34:12:00:00:00:00
-    }
+    std::string mac_str(18, 0);
+    snprintf(&mac_str[0], mac_str.size(),
+             "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+             array[0], array[1], array[2], array[3], array[4], array[5]);
+
+    return mac_str;
+}
+
+static uint64_t mac_str_to_integer(const std::string &mac_addr)
+{
+
 }
 
 static void print_usage()

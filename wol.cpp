@@ -1,4 +1,7 @@
 #include <sys/types.h>
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+#include <arpa/inet.h>
 #include <pwd.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -12,7 +15,8 @@
 #include <vector>
 #include <sstream>
 
-static std::string stores_file_path;
+static const std::string s_reg_str = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$";
+static std::string s_stores_file_path;
 
 static void print_usage();
 static void list_aliases();
@@ -20,16 +24,17 @@ static bool remove_alias(const std::string &alias);
 static bool stores_alias(const std::string &alias, const std::string &mac);
 static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec);
 static std::vector<std::string> split(const std::string &s, char delim);
-static std::map<uint64_t, std::string> parse_mac_addr(const std::string &data);
-static std::string mac_addr_to_str(const std::map<uint64_t, std::string> &mac_map);
+static std::map<std::string, std::string> parse_mac_addr(const std::string &new_data);
+static std::string mac_addr_to_str(const std::map<std::string, std::string> &mac_map);
 
-constexpr uint32_t kMACSize = sizeof(uint64_t);
+constexpr uint32_t kMACSize = 17;
 constexpr uint32_t kAliasSize = sizeof(uint16_t);
+constexpr uint32_t kHeadSize = kMACSize + kAliasSize;
 /*
-   8 byte      2 byte    variable len   
+   17 byte     2 byte    variable len   
  ______________________________________
 |          |           |               |
-| mac addr | alias len | variable data |
+| mac addr | alias len |  alias name   |
 |__________|___________|_______________|
 
 */
@@ -50,7 +55,7 @@ public:
 
     bool write(const std::string &data);
 
-    bool write_atomic(const std::string &data);
+    bool write_truncate_atomic(const std::string &data);
 
     int fd() const 
     {
@@ -67,6 +72,21 @@ private:
     std::string file_name_;
 };
 
+struct do_on_exit
+{
+    do_on_exit(std::function<void(void)> hd) : do_on_exit_hd_(hd) {}
+    ~do_on_exit()
+    {
+        if (do_on_exit_hd_)
+        {
+            do_on_exit_hd_();
+        }
+    }
+
+private:
+    std::function<void(void)> do_on_exit_hd_;
+};
+
 int main(int argc, char **argv)
 {
     auto pwd = getpwuid(getuid());
@@ -76,10 +96,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    stores_file_path = pwd->pw_dir;
-    stores_file_path.append("/.config/wol.db");
+    s_stores_file_path = pwd->pw_dir;
+    s_stores_file_path.append("/.config/wol.db");
 
-    std::regex reg("^(-){0,2}(.)+$");
+    std::regex reg("^(-{0,2})(.)+$");
     std::vector<std::string> wake_machine_vec; 
     std::map<std::string, std::string> cmd_map;
 
@@ -207,29 +227,6 @@ static std::vector<std::string> split(const std::string &s, char delim)
     return elems;
 }
 
-static std::string mac_integer_to_str(uint64_t mac_addr)
-{
-    uint8_t array[6];
-    //00:00:00:00:12:34:56:78
-    for (int i = 6; i > 0; --i)
-    {
-        array[i] = mac_addr & 0xfful;
-        mac_addr >>= 8;
-    }
-
-    std::string mac_str(18, 0);
-    snprintf(&mac_str[0], mac_str.size(),
-             "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
-             array[0], array[1], array[2], array[3], array[4], array[5]);
-
-    return mac_str;
-}
-
-static uint64_t mac_str_to_integer(const std::string &mac_addr)
-{
-
-}
-
 static void print_usage()
 {
     const char *usage = "Usage:\n"
@@ -268,56 +265,333 @@ static void print_usage()
     printf("%s\n", usage);
 }
 
+static std::map<std::string, std::string> parse_mac_addr(const std::string &data)
+{
+    std::size_t pos = 0;
+    std::size_t data_size = data.size();
+
+    std::map<std::string, std::string> mac_addr_map;
+    while (data_size - pos > kHeadSize)
+    {
+        uint16_t alias_size = 0;
+        memcpy(&alias_size, &data[pos + kMACSize], kAliasSize);
+        if (alias_size == 0 
+            || (data_size - pos) < (kHeadSize + alias_size))
+        {
+            fprintf(stderr, "stores file: %s invalid, please remove it\n", s_stores_file_path.c_str());
+            exit(1);
+        }
+
+        auto alias = data.substr(pos + kHeadSize, alias_size);
+        auto mc_addr = data.substr(pos, kMACSize);
+        mac_addr_map.emplace(std::move(alias), std::move(mc_addr));
+        pos += kHeadSize + alias_size;
+    }
+
+    return mac_addr_map;
+}
+
+static std::string mac_addr_to_str(const std::map<std::string, std::string> &mac_map)
+{
+    std::string data_str;
+    std::size_t total_size = 0;
+    for (auto &item : mac_map)
+    {
+        total_size += item.first.size();
+        total_size += kHeadSize;
+    }
+
+    if (total_size == 0)
+    {
+        return data_str;
+    }
+
+    data_str.resize(total_size);
+    std::size_t pos = 0;
+    for (auto &item : mac_map)
+    {
+        memcpy(&data_str[pos], &item.second[0], kMACSize);
+        pos += kMACSize;
+        uint16_t alias_size = item.first.size();
+        memcpy(&data_str[pos], &alias_size, kAliasSize);
+        pos += kAliasSize;
+        memcpy(&data_str[pos], &item.first[0], alias_size);
+        pos += alias_size;
+    }
+
+    return data_str;
+}
+
 static void list_aliases()
 {
     file_helper file;
-    if (!file.open(stores_file_path, O_RDONLY))
+    if (!file.open(s_stores_file_path, O_RDONLY))
     {
         exit(1);
     }
-
-    
     std::string data;
     if (!file.read(data))
     {
         exit(1);
     }
-
     auto mac_addr_map = parse_mac_addr(data);
-
     if (!mac_addr_map.empty())
     {
         printf("all aliases:\n");
         for (auto &item : mac_addr_map)
         {
-            printf("    %s  %s\n", item.first, item.second);
+            printf("    %s    %s\n", item.second.c_str(), item.first.c_str());
         }
     }
     else
     {
-
+        printf("no aliases\n");
     }
 }
 
 static bool remove_alias(const std::string &alias)
 {
+    file_helper file;
+    if (!file.open(s_stores_file_path, O_RDONLY))
+    {
+        return false;
+    }
+    std::string data;
+    if (!file.read(data))
+    {
+        return false;
+    }
+    auto mac_addr_map = parse_mac_addr(data);
+    auto it = mac_addr_map.find(alias);
+    if (it == mac_addr_map.end())
+    {
+        fprintf(stderr, "alias: %s no found\n", alias.c_str());
+        return false;
+    }
 
+    auto mac_addr = it->second;
+    mac_addr_map.erase(it);
+    auto new_data = mac_addr_to_str(mac_addr_map);
+    if (file.write_truncate_atomic(new_data))
+    {
+        printf("remove alias: %s %s ok\n", alias.c_str(), mac_addr.c_str());
+        return true;
+    }
+    else
+    {
+        fprintf(stderr, "remove alias failed\n");
+        return false;
+    }
 }
 
 static bool stores_alias(const std::string &alias, const std::string &mac)
 {
+    std::regex reg(s_reg_str);
+    if (!std::regex_match(mac, reg))
+    {
+        fprintf(stderr, "invalid mac addr：%s failed\n", mac.c_str());
+        return false;
+    }
 
+    file_helper file;
+    if (!file.open(s_stores_file_path, O_RDONLY))
+    {
+        exit(1);
+    }
+    std::string data;
+    if (!file.read(data))
+    {
+        exit(1);
+    }
+    auto mac_addr_map = parse_mac_addr(data);
+    auto it = mac_addr_map.find(alias);
+    if (it != mac_addr_map.end())
+    {
+        fprintf(stderr, "alias: %s  %s already exist\n", alias.c_str(), it->second.c_str());
+        return false;
+    }
+
+    mac_addr_map.emplace(alias, mac);
+    auto new_data = mac_addr_to_str(mac_addr_map);
+    if (file.write_truncate_atomic(new_data))
+    {
+        printf("stores alias: %s %s ok\n", alias.c_str(), mac.c_str());
+        return true;
+    }
+    else
+    {
+        fprintf(stderr, "stores alias failed\n");
+        return false;
+    }
 }
 
 static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec)
 {
-
+    ;
+    return true;
 }
 
-file_helper::file_helper(/* args */)
+bool file_helper::open(const std::string &file_name, const int mode)
 {
+    fd_ = ::open(file_name.c_str(), mode, 00640);
+    if (fd_ < 0)
+    {
+        fprintf(stderr, 
+                "open file: %s failed, errno:%d, dsec:%s\n",
+                file_name.c_str(),
+                errno,
+                strerror(errno));
+    }
+
+    file_name_ = file_name;
+    return true;
+}
+
+bool file_helper::read(std::string &data)
+{
+    struct stat st;
+    if (fstat(fd_, &st) != 0)
+    {
+        fprintf(stderr, 
+                "fstat file, errno:%d, dsec:%s\n",
+                errno,
+                strerror(errno));
+        return false;
+    }
+
+    data.resize(st.st_size);
+    decltype(st.st_size) pos = 0;
+    while (pos < st.st_size)
+    {
+        auto ret = ::read(fd_, &data[pos], st.st_size - pos);
+        if (ret < 0)
+        {
+            fprintf(stderr, 
+                    "read file failed, errno:%d, dsec:%s\n",
+                    errno,
+                    strerror(errno));
+            return false;
+        }
+        else if (ret == 0)
+        {
+            break;
+        }
+
+        pos += ret;
+    }
+
+    if (pos != st.st_size)
+    {
+        fprintf(stderr, "read file failed\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool file_helper::read(std::string &data, const std::size_t file_Size)
+{
+    data.resize(file_Size);
+    std::size_t pos = 0;
+    while (pos < file_Size)
+    {
+        auto ret = ::read(fd_, &data[pos], file_Size - pos);
+        if (ret < 0)
+        {
+            fprintf(stderr, 
+                    "read file failed, errno:%d, dsec:%s\n",
+                    errno,
+                    strerror(errno));
+            return false;
+        }
+        else if (ret == 0)
+        {
+            break;
+        }
+
+        pos += ret;
+    }
+
+    return true;
+}
+
+bool file_helper::write(const std::string &data)
+{
+    if (data.empty())
+    {
+        return true;
+    }
+
+    std::size_t pos = 0;
+    std::size_t data_size = data.size();
+    while (pos < data_size)
+    {
+        auto ret = ::write(fd_, &data[pos], data_size - pos);
+        if (ret < 0)
+        {
+            fprintf(stderr, 
+                    "write file failed, errno:%d, dsec:%s\n",
+                    errno,
+                    strerror(errno));
+            return false;
+        }
+        pos += ret;
+    }
+    
+    return true;
+}
+
+bool file_helper::write_truncate_atomic(const std::string &new_data)
+{
+    file_helper write_tmp_file;
+    do_on_exit do_exit([&write_tmp_file]()
+    {
+        auto file_name = write_tmp_file.file_name();
+        if (access(file_name.c_str(), F_OK) != -1)
+        {
+            unlink(file_name.c_str());
+        }
+    });
+
+    while (true)
+    {
+        uint32_t i = 0;
+        if (write_tmp_file.open(file_name_.append(std::to_string(i)), O_RDWR | O_CREAT | O_EXCL))
+        {
+            break;
+        }
+    }
+    
+    if (!write_tmp_file.write(new_data))
+    {
+        return false;
+    }
+
+    if (fsync(write_tmp_file.fd()) != 0)
+    {
+        fprintf(stderr, 
+                "rename file, errno:%d, dsec:%s\n",
+                errno,
+                strerror(errno));
+        return false;
+    }
+
+    if (rename(write_tmp_file.file_name().c_str(), file_name_.c_str()) != 0)
+    {
+        fprintf(stderr, 
+                "rename file, errno:%d, dsec:%s\n",
+                errno,
+                strerror(errno));
+        return false;
+    }
+
+    return true;
 }
 
 file_helper::~file_helper()
 {
+    if (fd_ > 0)
+    {
+        close(fd_);
+    }
 }

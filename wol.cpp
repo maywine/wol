@@ -425,6 +425,29 @@ static bool stores_alias(const std::string &alias, const std::string &mac)
     }
 }
 
+std::vector<char> package_magic_data(const std::string &mac_addr)
+{
+    std::vector<char> package_data;
+    package_data.resize(102);
+    memset(&package_data[0], 0xff, 6);
+
+    std::vector<char> mac_addr_data;
+    auto mac_addr_vec = split(mac_addr, ':');
+    for (auto &item : mac_addr_vec)
+    {
+        mac_addr_data.emplace_back(std::stoul(item, 0, 16));
+    }
+    
+    int package_data_pos = 6;
+    for(int i = 0; i < 16; ++i) 
+    {
+        memcpy(&package_data[6], &mac_addr_data[0], 6);
+        package_data_pos += 6;
+    }
+
+    return package_data;
+}
+
 static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec)
 {
     ;

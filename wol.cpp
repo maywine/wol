@@ -2,6 +2,11 @@
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <netinet/ether.h>
+#include <ifaddrs.h>  
 #include <pwd.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -448,9 +453,61 @@ std::vector<char> package_magic_data(const std::string &mac_addr)
     return package_data;
 }
 
+int get_subnet_mask()
+{
+    struct sockaddr_in *sin = nullptr;
+    struct ifaddrs *ifa = nullptr;
+    struct ifaddrs *iflist = nullptr;
+
+    if (getifaddrs(&iflist) < 0)
+    {
+        return -1;
+    }
+
+    for (ifa = iflist; ifa != NULL; ifa = ifa->ifa_next)
+    {
+        if(ifa->ifa_addr->sa_family == AF_INET)
+        {
+            printf("n>>> interfaceName: %sn", ifa->ifa_name);
+
+            sin = (struct sockaddr_in *)ifa->ifa_addr;
+            printf(">>> ipAddress: %sn", inet_ntoa(sin->sin_addr));
+
+            sin = (struct sockaddr_in *)ifa->ifa_dstaddr;
+            printf(">>> broadcast: %sn", inet_ntoa(sin->sin_addr));
+
+            sin = (struct sockaddr_in *)ifa->ifa_netmask;
+            printf(">>> subnetMask: %sn", inet_ntoa(sin->sin_addr));
+        }
+    }
+
+    freeifaddrs(iflist);
+    return 0;
+}
+
 static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec)
 {
-    ;
+    cmd_map.find("bcast");
+    cmd_map.find("port");
+    cmd_map.find("interface");
+
+    int sock = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock  < 0 )
+    {
+        fprintf(stderr, "cannot open socket, errno:%d, dsec:%s\n", errno, strerror(errno));
+        return false;
+    }
+
+    int optval = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *) &optval, sizeof(optval)) < 0)
+    {
+        fprintf( stderr, "cannot set socket options, errno:%d, dsec:%s\n", errno, strerror(errno));
+        return false;
+    }
+
+    struct ifreq req;
+    strncpy(req.ifr_name, "", IFNAMSIZ);
+    ioctl(sock, SIOCGIFINDEX, &req);
     return true;
 }
 

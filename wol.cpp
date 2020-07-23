@@ -15,6 +15,7 @@
 #include <string.h>
 #include <errno.h>
 #include <map>
+#include <set>
 #include <string>
 #include <regex>
 #include <vector>
@@ -27,7 +28,7 @@ static void print_usage();
 static void list_aliases();
 static bool remove_alias(const std::string &alias);
 static bool stores_alias(const std::string &alias, const std::string &mac);
-static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec);
+static bool send_wol(std::map<std::string, std::string> &cmd_map, std::vector<std::string> &wake_machine_vec);
 static std::vector<std::string> split(const std::string &s, char delim);
 static std::map<std::string, std::string> parse_mac_addr(const std::string &new_data);
 static std::string mac_addr_to_str(const std::map<std::string, std::string> &mac_map);
@@ -104,117 +105,123 @@ int main(int argc, char **argv)
     s_stores_file_path = pwd->pw_dir;
     s_stores_file_path.append("/.config/wol.db");
 
-    std::regex reg("^(-{0,2})(.)+$");
+    std::regex reg("^(-{0,2})(.+)$");
     std::vector<std::string> wake_machine_vec; 
     std::map<std::string, std::string> cmd_map;
 
-    for (int i = 1; i < argc;)
+    try
     {
-        std::string cmd = argv[i];
-        std::smatch match_result;
-        if (std::regex_match(cmd, match_result, reg))
+        for (int i = 1; i < argc;)
         {
-            cmd = match_result[2];
+            std::string cmd = argv[i];
+            std::smatch match_result;
+            if (std::regex_match(cmd, match_result, reg))
+            {
+                cmd = match_result[2];
+            }
+
+            if (cmd == "h" || cmd == "help")
+            {
+                print_usage();
+                exit(0);
+            }
+            else if (cmd == "p" || cmd == "port")
+            {
+                if (i + 1 < argc)
+                {
+                    cmd_map.emplace("port", argv[i+1]);
+                    i += 2;
+                    continue;
+                }
+                else 
+                {
+                    fprintf(stderr, "option %s required parameters\n", cmd.c_str());
+                    exit(1);
+                }
+            }
+            else if (cmd == "b" || cmd == "bcast")
+            {
+                if (i + 1 < argc)
+                {
+                    cmd_map.emplace("bcast", argv[i+1]);
+                    i += 2;
+                    continue;
+                }
+                else 
+                {
+                    fprintf(stderr, "option %s required parameters\n", cmd.c_str());
+                    exit(1);
+                }
+            }
+            else if (cmd == "i" || cmd == "interface")
+            {
+                if (i + 1 < argc)
+                {
+                    cmd_map.emplace("interface", argv[i+1]);
+                    i += 2;
+                    continue;
+                }
+                else 
+                {
+                    fprintf(stderr, "option %s required parameters\n", cmd.c_str());
+                    exit(1);
+                }
+            }
+            else if (cmd == "list")
+            {
+                list_aliases();
+                exit(0);
+            }
+            else if (cmd == "remove")
+            {
+                if (i + 1 < argc)
+                {            
+                    remove_alias(argv[i+1]) ? exit(0) : exit(1);
+                }
+                else
+                {
+                    fprintf(stderr, "option %s required parameters\n", cmd.c_str());
+                    exit(1);   
+                }
+            }
+            else if (cmd == "alias")
+            {
+                if (i + 2 < argc)
+                {
+                    stores_alias(argv[i+1], argv[i+2]) ? exit(0) : exit(1);
+                }
+                else 
+                {
+                    fprintf(stderr, "option %s required two parameters\n", cmd.c_str());
+                    exit(1);
+                }
+            }
+            else if (cmd == "wake")
+            {
+                if (i + 1 < argc)
+                {
+                    cmd_map.emplace("wake", argv[i+1]);
+                    i += 2;
+                    continue;
+                }
+                else 
+                {
+                    fprintf(stderr, "option %s required two parameters\n", cmd.c_str());
+                    exit(1);
+                }
+            }
+
+            wake_machine_vec.emplace_back(argv[i]);
+            ++i;
         }
 
-        if (cmd == "h" || cmd == "help")
-        {
-            print_usage();
-            exit(0);
-        }
-        else if (cmd == "p" || cmd == "port")
-        {
-            if (i + 1 < argc)
-            {
-                cmd_map.emplace("port", argv[i+1]);
-                i += 2;
-                continue;
-            }
-            else 
-            {
-                fprintf(stderr, "option %s required parameters\n", cmd.c_str());
-                exit(1);
-            }
-        }
-        else if (cmd == "b" || cmd == "bcast")
-        {
-            if (i + 1 < argc)
-            {
-                cmd_map.emplace("bcast", argv[i+1]);
-                i += 2;
-                continue;
-            }
-            else 
-            {
-                fprintf(stderr, "option %s required parameters\n", cmd.c_str());
-                exit(1);
-            }
-        }
-        else if (cmd == "i" || cmd == "interface")
-        {
-            if (i + 1 < argc)
-            {
-                cmd_map.emplace("interface", argv[i+1]);
-                i += 2;
-                continue;
-            }
-            else 
-            {
-                fprintf(stderr, "option %s required parameters\n", cmd.c_str());
-                exit(1);
-            }
-        }
-        else if (cmd == "list")
-        {
-            list_aliases();
-            exit(0);
-        }
-        else if (cmd == "remove")
-        {
-            if (i + 1 < argc)
-            {            
-                remove_alias(argv[i+1]) ? exit(0) : exit(1);
-            }
-            else
-            {
-                fprintf(stderr, "option %s required parameters\n", cmd.c_str());
-                exit(1);   
-            }
-        }
-        else if (cmd == "alias")
-        {
-            if (i + 2 < argc)
-            {
-                stores_alias(argv[i+1], argv[i+2]) ? exit(0) : exit(1);
-            }
-            else 
-            {
-                fprintf(stderr, "option %s required two parameters\n", cmd.c_str());
-                exit(1);
-            }
-        }
-        else if (cmd == "wake")
-        {
-            if (i + 1 < argc)
-            {
-                cmd_map.emplace("wake", argv[i+1]);
-                i += 2;
-                continue;
-            }
-            else 
-            {
-                fprintf(stderr, "option %s required two parameters\n", cmd.c_str());
-                exit(1);
-            }
-        }
-
-        wake_machine_vec.emplace_back(argv[i]);
-        ++i;
+        send_wol(cmd_map, wake_machine_vec) ? exit(0) : exit(1);
+        
     }
-
-    if (cmd_map.count("wake") > 0)
+    catch (const std::exception &err)
     {
-        wake_alias(cmd_map, wake_machine_vec) ? exit(0) : exit(1);
+        fprintf(stderr, "catch exception： %s\n", err.what());
+        return 1;
     }
 
     return 0;
@@ -237,6 +244,7 @@ static void print_usage()
     const char *usage = "Usage:\n"
     "   To wake up a machine:\n"
     "       wol wake <mac address | alias> <optional ...>\n"
+    "       wol <mac address | alias> <optional ...>\n"
     "\n"
     "   To store an alias:\n"
     "       wol alias <alias> <mac address>\n"
@@ -261,7 +269,6 @@ static void print_usage()
     "\n"
     "\n"
     "Options:\n"
-    "   -v --version       prints the application version\n"
     "   -h --help          prints this help menu\n"
     "   -p --port          udp port to send bcast packet to\n"
     "   -b --bcast         broadcast IP to send packet to\n"
@@ -330,7 +337,7 @@ static std::string mac_addr_to_str(const std::map<std::string, std::string> &mac
 static void list_aliases()
 {
     file_helper file;
-    if (!file.open(s_stores_file_path, O_RDONLY))
+    if (!file.open(s_stores_file_path, O_RDONLY | O_CREAT))
     {
         exit(1);
     }
@@ -420,7 +427,7 @@ static bool stores_alias(const std::string &alias, const std::string &mac)
     auto new_data = mac_addr_to_str(mac_addr_map);
     if (file.write_truncate_atomic(new_data))
     {
-        printf("stores alias: %s %s ok\n", alias.c_str(), mac.c_str());
+        printf("stores alias %s %s ok\n", alias.c_str(), mac.c_str());
         return true;
     }
     else
@@ -453,67 +460,159 @@ std::vector<char> package_magic_data(const std::string &mac_addr)
     return package_data;
 }
 
-int get_subnet_mask()
+std::set<std::string> get_interfaces()
 {
-    struct sockaddr_in *sin = nullptr;
-    struct ifaddrs *ifa = nullptr;
-    struct ifaddrs *iflist = nullptr;
+    std::set<std::string> interfaces_name_set;
+    struct ifaddrs *iflist;
 
     if (getifaddrs(&iflist) < 0)
     {
-        return -1;
+        return interfaces_name_set;
     }
 
-    for (ifa = iflist; ifa != NULL; ifa = ifa->ifa_next)
+    for (auto ifa = iflist; ifa != nullptr; ifa = ifa->ifa_next)
     {
-        if(ifa->ifa_addr->sa_family == AF_INET)
+        if (ifa->ifa_addr
+            && ifa->ifa_flags & IFF_UP
+            && !(ifa->ifa_flags & IFF_LOOPBACK))
         {
-            printf("n>>> interfaceName: %sn", ifa->ifa_name);
-
-            sin = (struct sockaddr_in *)ifa->ifa_addr;
-            printf(">>> ipAddress: %sn", inet_ntoa(sin->sin_addr));
-
-            sin = (struct sockaddr_in *)ifa->ifa_dstaddr;
-            printf(">>> broadcast: %sn", inet_ntoa(sin->sin_addr));
-
-            sin = (struct sockaddr_in *)ifa->ifa_netmask;
-            printf(">>> subnetMask: %sn", inet_ntoa(sin->sin_addr));
+            std::string ifa_name(ifa->ifa_name);
+            interfaces_name_set.emplace(std::move(ifa_name));
         }
     }
 
     freeifaddrs(iflist);
-    return 0;
+    return interfaces_name_set;
 }
 
-static bool wake_alias(const std::map<std::string, std::string> &cmd_map, const std::vector<std::string> &wake_machine_vec)
+static bool send_wol(std::map<std::string, std::string> &cmd_map, std::vector<std::string> &wake_machine_vec)
 {
-    cmd_map.find("bcast");
-    cmd_map.find("port");
-    cmd_map.find("interface");
+    std::string bcast_addr = "255.255.255.255";
+    uint16_t port = 9;
+    std::set<std::string> interface_set;
 
-    int sock = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock  < 0 )
+    auto it = cmd_map.find("bcast");
+    if (it != cmd_map.end())
     {
-        fprintf(stderr, "cannot open socket, errno:%d, dsec:%s\n", errno, strerror(errno));
-        return false;
+        bcast_addr = it->second;
+    }
+    it = cmd_map.find("port");
+    if (it != cmd_map.end())
+    {
+        port = std::stoi(it->second);
+    }
+    it = cmd_map.find("interface");
+    if (it != cmd_map.end())
+    {
+        interface_set.emplace(it->second);
     }
 
-    int optval = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *) &optval, sizeof(optval)) < 0)
+    if (interface_set.empty())
     {
-        fprintf( stderr, "cannot set socket options, errno:%d, dsec:%s\n", errno, strerror(errno));
-        return false;
+        interface_set = get_interfaces();
+        if (interface_set.empty())
+        {
+            fprintf(stderr, "get network interfaces failed, errno:%d, dsec:%s\n", errno, strerror(errno));
+            return false;
+        }
     }
 
-    struct ifreq req;
-    strncpy(req.ifr_name, "", IFNAMSIZ);
-    ioctl(sock, SIOCGIFINDEX, &req);
+    file_helper file;
+    std::string data;
+    if (!file.open(s_stores_file_path, O_RDONLY | O_CREAT))
+    {
+        fprintf(stderr, "open stores file faile\n");
+        return false;
+    }
+    else 
+    {
+        if (!file.read(data))
+        {
+            fprintf(stderr, "read open stores file failed\n");
+            return false;
+        }
+    }
+
+    auto mac_addr_map = parse_mac_addr(data);
+    it = cmd_map.find("wake");
+    if (it != cmd_map.end())
+    {
+        wake_machine_vec.emplace_back(it->second);
+    }
+
+    std::vector<std::string> mac_addr_vec;
+    for (auto &mac_addr : wake_machine_vec)
+    {
+        std::regex reg(s_reg_str);
+        if (std::regex_match(mac_addr, reg))
+        {
+            std::replace(mac_addr.begin(), mac_addr.begin(), '-', ':');
+            mac_addr_vec.emplace_back(std::move(mac_addr));
+        }
+        else
+        {
+            auto addr_it = mac_addr_map.find(mac_addr);
+            if (addr_it == mac_addr_map.end())
+            {
+                fprintf(stderr, "no aliase: %s found\n", mac_addr.c_str());
+                return false;
+            }
+
+            std::replace(addr_it->second.begin(), addr_it->second.begin(), '-', ':');
+            mac_addr_vec.emplace_back(addr_it->second);
+        }
+    }
+
+    for (auto &mac_addr : mac_addr_vec)
+    {
+        auto packet = package_magic_data(mac_addr);
+        for (auto &interface : interface_set)
+        {
+            int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock  < 0 )
+            {
+                fprintf(stderr, "cannot open socket, errno:%d, dsec:%s\n", errno, strerror(errno));
+                return false;
+            }
+
+            int optval = 1;
+            if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *) &optval, sizeof(optval)) < 0)
+            {
+                fprintf(stderr, "cannot set socket options, errno:%d, desc:%s\n", errno, strerror(errno));
+                return false;
+            }
+
+            struct ifreq req;
+            memset(&req, 0, sizeof(req));
+            strncpy(req.ifr_name, interface.c_str(), IFNAMSIZ);
+            ioctl(sock, SIOCGIFINDEX, &req);
+
+            struct sockaddr_in addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(port);
+            if (inet_aton(bcast_addr.c_str(), &addr.sin_addr) == 0)
+            {
+                fprintf(stderr, "Invalid remote ip address given: %s\n", bcast_addr.c_str());
+                return false;
+            }
+
+            if (sendto(sock, &packet[0], packet.size(), 0, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+            {
+                fprintf(stderr, "cannot send data, errno:%d,  desc:%s\n", errno, strerror(errno));
+                return false;
+            }
+
+            printf("Successful sent WOL magic packet to: %s by interface: %s\n", mac_addr.c_str(), interface.c_str());
+        }
+    }
+
     return true;
 }
 
 bool file_helper::open(const std::string &file_name, const int mode)
 {
-    fd_ = ::open(file_name.c_str(), mode, 00640);
+    fd_ = ::open(file_name.c_str(), mode, 0660);
     if (fd_ < 0)
     {
         fprintf(stderr, 
@@ -633,10 +732,11 @@ bool file_helper::write_truncate_atomic(const std::string &new_data)
         }
     });
 
+    uint32_t i = 0;
     while (true)
     {
-        uint32_t i = 0;
-        if (write_tmp_file.open(file_name_.append(std::to_string(i)), O_RDWR | O_CREAT | O_EXCL))
+        auto tmp_file = file_name_;
+        if (write_tmp_file.open(tmp_file.append(std::to_string(i)), O_RDWR | O_CREAT | O_EXCL))
         {
             break;
         }

@@ -406,7 +406,7 @@ static bool stores_alias(const std::string &alias, const std::string &mac)
     }
 
     file_helper file;
-    if (!file.open(s_stores_file_path, O_RDONLY))
+    if (!file.open(s_stores_file_path, O_RDONLY | O_CREAT))
     {
         exit(1);
     }
@@ -437,9 +437,9 @@ static bool stores_alias(const std::string &alias, const std::string &mac)
     }
 }
 
-std::vector<char> package_magic_data(const std::string &mac_addr)
+std::vector<unsigned char> package_magic_data(const std::string &mac_addr)
 {
-    std::vector<char> package_data;
+    std::vector<unsigned char> package_data;
     package_data.resize(102);
     memset(&package_data[0], 0xff, 6);
 
@@ -453,7 +453,7 @@ std::vector<char> package_magic_data(const std::string &mac_addr)
     int package_data_pos = 6;
     for(int i = 0; i < 16; ++i) 
     {
-        memcpy(&package_data[6], &mac_addr_data[0], 6);
+        memcpy(&package_data[package_data_pos], &mac_addr_data[0], 6);
         package_data_pos += 6;
     }
 
@@ -620,6 +620,7 @@ bool file_helper::open(const std::string &file_name, const int mode)
                 file_name.c_str(),
                 errno,
                 strerror(errno));
+        return false;
     }
 
     file_name_ = file_name;

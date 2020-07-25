@@ -57,7 +57,7 @@ The alias file is typically stored in the user's Home directory under the path o
 
 ### Supported MAC addresses
 
-The following MAC addresses are valid and will match: 01-23-45-56-67-89, 89:0A:CD:EF:00:12, 89:0a:cd:ef:00:12
+The following MAC addresses are valid and will match: 01-23-45-56-67-89, 89:0A:CD:EF:00:12, 89:0a:af:ef:00:12
 
 The following MAC addresses are not (yet) valid: 1-2-3-4-5-6, 01 23 45 56 67 89
 

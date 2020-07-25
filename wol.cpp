@@ -437,7 +437,7 @@ static bool stores_alias(const std::string &alias, const std::string &mac)
     }
 }
 
-std::vector<unsigned char> package_magic_data(const std::string &mac_addr)
+static std::vector<unsigned char> package_magic_data(const std::string &mac_addr)
 {
     std::vector<unsigned char> package_data;
     package_data.resize(102);
@@ -460,7 +460,7 @@ std::vector<unsigned char> package_magic_data(const std::string &mac_addr)
     return package_data;
 }
 
-std::set<std::string> get_interfaces()
+static std::set<std::string> get_interfaces()
 {
     std::set<std::string> interfaces_name_set;
     struct ifaddrs *iflist;
@@ -473,6 +473,7 @@ std::set<std::string> get_interfaces()
     for (auto ifa = iflist; ifa != nullptr; ifa = ifa->ifa_next)
     {
         if (ifa->ifa_addr
+            && ifa->ifa_addr->sa_family == AF_INET
             && ifa->ifa_flags & IFF_UP
             && !(ifa->ifa_flags & IFF_LOOPBACK))
         {
